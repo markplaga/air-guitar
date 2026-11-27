@@ -1,0 +1,1517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Air Strings — Spatial Plucked-String Synthesizer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <!-- MediaPipe Hands via CDN for optional webcam hand tracking -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <style>
+    /* Custom styling for dark studio aesthetic and responsive full-viewport canvas */
+    :root {
+      color-scheme: dark;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #07090f;
+      color: #f1f5f9;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+    .font-mono-tech {
+      font-family: 'JetBrains Mono', monospace;
+    }
+    #stage-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      cursor: crosshair;
+    }
+    /* Subtle glass panel styling */
+    .glass-panel {
+      background: rgba(15, 20, 34, 0.72);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    }
+    select, button {
+      transition: transform 120ms ease, background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+    }
+    button:active:not(:disabled) {
+      transform: scale(0.97);
+    }
+  </style>
+</head>
+<body class="bg-[#07090f] text-slate-100 antialiased">
+  <!-- Main full-screen interactive canvas -->
+  <canvas id="stage-canvas"></canvas>
+
+  <!-- Hidden video element used when Camera Hand Tracking is enabled -->
+  <video id="webcam-video" class="hidden" playsinline muted></video>
+
+  <!-- Top Studio Control Bar -->
+  <header class="fixed top-3 left-3 right-3 z-20 flex flex-wrap items-center justify-between gap-2 pointer-events-none">
+    <!-- Brand & Mode Hint -->
+    <div class="glass-panel rounded-2xl px-3.5 py-2.5 flex flex-wrap items-center gap-3 pointer-events-auto max-w-full">
+      <div class="flex items-center gap-2.5">
+        <div class="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_12px_#22d3ee]"></div>
+        <h1 class="text-sm sm:text-base font-semibold tracking-tight text-white">Air Strings</h1>
+      </div>
+      <span class="hidden md:inline-block h-4 w-px bg-slate-700/80"></span>
+      <p class="text-xs text-slate-300 leading-snug">
+        <span class="text-cyan-300 font-medium">Pinch &amp; Pull</span> (or Drag) to Create
+        <span class="mx-1 text-slate-500">·</span>
+        <span class="text-amber-300 font-medium">Index / Cursor Cross</span> to Pluck
+      </p>
+    </div>
+
+    <!-- Musical & Session Controls -->
+    <div class="glass-panel rounded-2xl px-2.5 py-2 flex flex-wrap items-center gap-1.5 sm:gap-2 pointer-events-auto">
+      <!-- Camera Toggle -->
+      <button
+        id="btn-camera"
+        type="button"
+        class="px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-800/90 hover:bg-slate-700/90 text-slate-100 border border-slate-600/50 flex items-center gap-1.5"
+        title="Toggle Webcam Hand Tracking"
+      >
+        <span id="cam-dot" class="w-2 h-2 rounded-full bg-slate-400"></span>
+        <span id="cam-label">Camera: Off</span>
+      </button>
+
+      <!-- Root Note Selector -->
+      <label class="flex items-center gap-1 text-xs text-slate-400 px-1">
+        <span class="hidden sm:inline">Root</span>
+        <select
+          id="select-root"
+          class="bg-slate-900/90 text-slate-100 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs font-mono-tech focus:outline-none focus:border-cyan-400"
+        >
+          <option value="0">C</option>
+          <option value="1">C#</option>
+          <option value="2">D</option>
+          <option value="3">D#</option>
+          <option value="4">E</option>
+          <option value="5">F</option>
+          <option value="6">F#</option>
+          <option value="7">G</option>
+          <option value="8">G#</option>
+          <option value="9">A</option>
+          <option value="10">A#</option>
+          <option value="11">B</option>
+        </select>
+      </label>
+
+      <!-- Scale Selector -->
+      <label class="flex items-center gap-1 text-xs text-slate-400 px-1">
+        <span class="hidden sm:inline">Scale</span>
+        <select
+          id="select-scale"
+          class="bg-slate-900/90 text-slate-100 border border-slate-700/80 rounded-xl px-2 py-1.5 text-xs focus:outline-none focus:border-cyan-400"
+        >
+          <option value="pentatonic_major" selected>Pentatonic Major</option>
+          <option value="pentatonic_minor">Pentatonic Minor</option>
+          <option value="dorian">Dorian</option>
+          <option value="natural_minor">Natural Minor</option>
+          <option value="free">Free / Glide</option>
+        </select>
+      </label>
+
+      <!-- Spawn Sample Strings -->
+      <button
+        id="btn-samples"
+        type="button"
+        class="px-3 py-1.5 rounded-xl text-xs font-medium bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 border border-cyan-400/40"
+      >
+        Spawn Sample Strings
+      </button>
+
+      <!-- Clear All -->
+      <button
+        id="btn-clear"
+        type="button"
+        class="px-3 py-1.5 rounded-xl text-xs font-medium bg-rose-500/15 hover:bg-rose-500/25 text-rose-200 border border-rose-400/30"
+      >
+        Clear All Strings
+      </button>
+
+      <!-- Fullscreen Toggle -->
+      <button
+        id="btn-fullscreen"
+        type="button"
+        class="px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-800/90 hover:bg-slate-700/90 text-cyan-200 border border-cyan-400/30"
+        title="Toggle Fullscreen"
+      >
+        Fullscreen
+      </button>
+
+      <!-- Hide All UI Toggle -->
+      <button
+        id="btn-hide-ui"
+        type="button"
+        class="px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-800/90 hover:bg-slate-700/90 text-amber-200 border border-amber-400/30"
+        title="Hide all interface elements (restores on physical touch)"
+      >
+        Hide UI
+      </button>
+    </div>
+  </header>
+
+  <!-- Non-blocking Status / Toast Banner -->
+  <div id="status-banner" class="fixed top-20 left-1/2 -translate-x-1/2 z-20 pointer-events-none hidden">
+    <div id="status-banner-inner" class="glass-panel rounded-xl px-4 py-2 text-xs text-amber-200 border border-amber-400/30 shadow-lg"></div>
+  </div>
+
+  <!-- Bottom Telemetry & Gesture Debug Bar -->
+  <footer class="fixed bottom-3 left-3 right-3 z-20 flex flex-wrap items-center justify-between gap-2 pointer-events-none">
+    <!-- Pinch & Tracking State Indicator -->
+    <div class="glass-panel rounded-2xl px-3.5 py-2 flex items-center gap-3 pointer-events-auto text-xs">
+      <div class="flex items-center gap-2">
+        <span id="pinch-badge" class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-mono-tech text-[11px]">
+          <span id="pinch-dot" class="w-1.5 h-1.5 rounded-full bg-slate-500"></span>
+          <span id="pinch-text">IDLE</span>
+        </span>
+      </div>
+      <span class="text-slate-400 hidden sm:inline">
+        Strings: <strong id="string-count" class="text-slate-100 font-mono-tech">0</strong>
+      </span>
+      <span id="track-source" class="text-slate-400 font-mono-tech text-[11px]">Input: Pointer</span>
+    </div>
+
+    <!-- Active Plucked Note & Brightness / Overtone Meter -->
+    <div class="glass-panel rounded-2xl px-3.5 py-2 flex items-center gap-3 pointer-events-auto text-xs min-w-[230px] sm:min-w-[290px]">
+      <div class="flex items-baseline gap-2 shrink-0">
+        <span class="text-[11px] uppercase tracking-wider text-slate-400">Pluck</span>
+        <span id="active-note" class="font-mono-tech text-sm font-semibold text-cyan-300">—</span>
+        <span id="active-pos" class="font-mono-tech text-[11px] text-slate-400">p:--</span>
+      </div>
+      <div class="flex-1 flex flex-col gap-1">
+        <div class="flex justify-between text-[10px] font-mono-tech text-slate-400">
+          <span>WARM</span>
+          <span id="brightness-val" class="text-amber-300">0%</span>
+          <span>BRIGHT</span>
+        </div>
+        <div class="w-full h-2 rounded-full bg-slate-800/90 overflow-hidden border border-slate-700/60">
+          <div
+            id="brightness-bar"
+            class="h-full w-0 rounded-full bg-gradient-to-r from-cyan-400 via-amber-300 to-rose-400 transition-[width] duration-100"
+          ></div>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    /**
+     * =========================================================================
+     * AIR STRINGS — Spatial Plucked-String Synthesizer
+     * =========================================================================
+     * Architectural Overview:
+     * 1. Pitch & Scale Engine: Maps string length (longer = lower pitch, shorter =
+     *    higher pitch) across MIDI 48 (C3) to MIDI 72 (C5) with optional scale
+     *    quantization and detent snap detection.
+     * 2. Audio Synthesizer (Web Audio API): Synthesizes warm plucked strings via a
+     *    Karplus-Strong physical-modeling delay/damping burst blended with a
+     *    dual-oscillator harmonic voice (triangle + sawtooth/sub) passed through
+     *    a dynamic low-pass filter controlled by pluck off-center distance
+     *    (|p - 0.5|) and pluck velocity, with stereo panning from horizontal X.
+     * 3. String Creation & Pluck Detection: Supports both pointer drag (click/touch)
+     *    and optional MediaPipe Hands pinch-and-stretch + index-finger crossing
+     *    detection, complete with release-to-anchor locking.
+     * 4. Standing-Wave Visual Engine: Renders strings with live pitch/detent cues
+     *    while stretching, and damped standing waves upon plucking:
+     *      y(s, t) = A * exp(-gamma * t) * sin(pi * p) * sin(pi * s) * cos(omega * t + phi)
+     *    accompanied by overtone shimmer particles and anchor pulses.
+     * =========================================================================
+     */
+
+    // --- Musical Constants & Scales ---
+    const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    const SCALES = {
+      pentatonic_major: [0, 2, 4, 7, 9],
+      pentatonic_minor: [0, 3, 5, 7, 10],
+      dorian: [0, 2, 3, 5, 7, 9, 10],
+      natural_minor: [0, 2, 3, 5, 7, 8, 10],
+      free: null
+    };
+
+    const MIN_MIDI = 48; // C3 (low bass end for long strings)
+    const MAX_MIDI = 72; // C5 (high treble end for short strings)
+    const MIN_STRING_LEN_PX = 36;
+
+    // --- DOM References ---
+    const canvas = document.getElementById('stage-canvas');
+    const ctx = canvas.getContext('2d');
+    const videoEl = document.getElementById('webcam-video');
+
+    const btnCamera = document.getElementById('btn-camera');
+    const camDot = document.getElementById('cam-dot');
+    const camLabel = document.getElementById('cam-label');
+    const selectRoot = document.getElementById('select-root');
+    const selectScale = document.getElementById('select-scale');
+    const btnSamples = document.getElementById('btn-samples');
+    const btnClear = document.getElementById('btn-clear');
+    const btnFullscreen = document.getElementById('btn-fullscreen');
+    const btnHideUi = document.getElementById('btn-hide-ui');
+    const studioHeader = document.querySelector('header');
+    const studioFooter = document.querySelector('footer');
+
+    const statusBanner = document.getElementById('status-banner');
+    const statusBannerInner = document.getElementById('status-banner-inner');
+
+    const pinchBadge = document.getElementById('pinch-badge');
+    const pinchDot = document.getElementById('pinch-dot');
+    const pinchText = document.getElementById('pinch-text');
+    const stringCountEl = document.getElementById('string-count');
+    const trackSourceEl = document.getElementById('track-source');
+
+    const activeNoteEl = document.getElementById('active-note');
+    const activePosEl = document.getElementById('active-pos');
+    const brightnessValEl = document.getElementById('brightness-val');
+    const brightnessBarEl = document.getElementById('brightness-bar');
+
+    // --- Application State ---
+    const state = {
+      width: window.innerWidth,
+      height: window.innerHeight,
+      dpr: Math.min(window.devicePixelRatio || 1, 2),
+      rootPitchClass: 0, // 0 = C
+      scaleKey: 'pentatonic_major',
+      strings: [],
+      particles: [],
+      // Active string creation draft (either via pointer drag or two-hand pinch)
+      draft: null, // { a: {x,y}, b: {x,y}, midi: number, noteName: string, snapped: boolean, lastDetentMidi: number, detentFlash: number }
+      // Pointer tracking for plucking & dragging
+      pointer: {
+        x: null,
+        y: null,
+        prevX: null,
+        prevY: null,
+        vx: 0,
+        vy: 0,
+        isDown: false,
+        active: false
+      },
+      // Camera / MediaPipe Hand Tracking state
+      camera: {
+        enabled: false,
+        starting: false,
+        mpHands: null,
+        mpCamera: null,
+        stream: null,
+        hands: [], // normalized/canvas hand landmarks info
+        twoHandPinching: false,
+        indexTip: null, // { x, y, prevX, prevY, vx, vy }
+        pinchA: null,   // { x, y, pinching, prevPinching }
+        pinchB: null    // { x, y, pinching, prevPinching }
+      },
+      // HUD readout decay
+      lastPluckHudTime: 0,
+      // UI visibility state
+      uiHidden: false
+    };
+
+    let statusTimeout = null;
+    function showStatus(msg, tone = 'amber', durationMs = 4200) {
+      if (state.uiHidden) return;
+      statusBannerInner.textContent = msg;
+      statusBannerInner.className =
+        'glass-panel rounded-xl px-4 py-2 text-xs shadow-lg border ' +
+        (tone === 'error'
+          ? 'text-rose-200 border-rose-400/40'
+          : tone === 'ok'
+          ? 'text-emerald-200 border-emerald-400/40'
+          : 'text-amber-200 border-amber-400/30');
+      statusBanner.classList.remove('hidden');
+      if (statusTimeout) clearTimeout(statusTimeout);
+      statusTimeout = setTimeout(() => {
+        statusBanner.classList.add('hidden');
+      }, durationMs);
+    }
+
+    // --- Canvas Sizing & Resize ---
+    function resizeCanvas() {
+      const prevW = state.width || window.innerWidth;
+      const prevH = state.height || window.innerHeight;
+      state.width = window.innerWidth;
+      state.height = window.innerHeight;
+      state.dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+      canvas.width = Math.floor(state.width * state.dpr);
+      canvas.height = Math.floor(state.height * state.dpr);
+      ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+
+      // Proportionally scale existing string anchors on window resize
+      if (prevW > 0 && prevH > 0 && (prevW !== state.width || prevH !== state.height)) {
+        const sx = state.width / prevW;
+        const sy = state.height / prevH;
+        for (const s of state.strings) {
+          s.a.x *= sx;
+          s.a.y *= sy;
+          s.b.x *= sx;
+          s.b.y *= sy;
+        }
+      }
+    }
+
+    // --- Pitch, Scale Quantization & Note Naming ---
+    function midiToFreq(midi) {
+      return 440 * Math.pow(2, (midi - 69) / 12);
+    }
+
+    function midiToNoteName(midi) {
+      const rounded = Math.round(midi);
+      const pc = ((rounded % 12) + 12) % 12;
+      const octave = Math.floor(rounded / 12) - 1;
+      return `${NOTE_NAMES[pc]}${octave}`;
+    }
+
+    /**
+     * Maps string length (in pixels) to a MIDI note:
+     * Longer string -> lower MIDI (closer to C3)
+     * Shorter string -> higher MIDI (closer to C5)
+     */
+    function lengthToMidi(lengthPx) {
+      const maxSpan = Math.max(240, Math.min(state.width * 0.72, 920));
+      const minSpan = MIN_STRING_LEN_PX;
+      const clampedLen = Math.max(minSpan, Math.min(maxSpan, lengthPx));
+      // u = 0 for short string (high pitch), u = 1 for long string (low pitch)
+      const u = (clampedLen - minSpan) / (maxSpan - minSpan);
+      const rawMidi = MAX_MIDI - u * (MAX_MIDI - MIN_MIDI);
+
+      const scaleIntervals = SCALES[state.scaleKey];
+      if (!scaleIntervals) {
+        return { midi: rawMidi, snapped: false };
+      }
+
+      // Find nearest pitch in active scale across the MIDI range
+      let bestMidi = Math.round(rawMidi);
+      let bestDist = Infinity;
+      for (let m = MIN_MIDI - 4; m <= MAX_MIDI + 4; m++) {
+        const rel = (((m - state.rootPitchClass) % 12) + 12) % 12;
+        if (scaleIntervals.includes(rel)) {
+          const dist = Math.abs(m - rawMidi);
+          if (dist < bestDist) {
+            bestDist = dist;
+            bestMidi = m;
+          }
+        }
+      }
+      return { midi: bestMidi, snapped: true };
+    }
+
+    function refreshAllStringPitches() {
+      for (const s of state.strings) {
+        const len = Math.hypot(s.b.x - s.a.x, s.b.y - s.a.y);
+        const mapped = lengthToMidi(len);
+        s.midi = mapped.midi;
+        s.freq = midiToFreq(mapped.midi);
+        s.noteName = midiToNoteName(mapped.midi);
+      }
+    }
+
+    // --- Web Audio API Plucked-String Synthesizer ---
+    const audioEngine = {
+      ctx: null,
+      masterGain: null,
+      convolver: null,
+      wetGain: null,
+
+      ensureContext() {
+        try {
+          if (!this.ctx) {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            this.ctx = new AudioCtx();
+
+            this.masterGain = this.ctx.createGain();
+            this.masterGain.gain.value = 0.65;
+
+            // Subtle algorithmic hall/room impulse for lush string air
+            this.convolver = this.ctx.createConvolver();
+            this.convolver.buffer = this.createImpulseBuffer(1.6, 2.8);
+
+            this.wetGain = this.ctx.createGain();
+            this.wetGain.gain.value = 0.22;
+
+            const dryGain = this.ctx.createGain();
+            dryGain.gain.value = 0.88;
+
+            this.masterGain.connect(dryGain);
+            dryGain.connect(this.ctx.destination);
+
+            this.masterGain.connect(this.convolver);
+            this.convolver.connect(this.wetGain);
+            this.wetGain.connect(this.ctx.destination);
+          }
+          if (this.ctx.state === 'suspended') {
+            this.ctx.resume();
+          }
+        } catch (err) {
+          console.warn('Web Audio initialization issue:', err);
+        }
+      },
+
+      createImpulseBuffer(durationSec, decay) {
+        const rate = this.ctx.sampleRate;
+        const length = Math.floor(rate * durationSec);
+        const impulse = this.ctx.createBuffer(2, length, rate);
+        for (let ch = 0; ch < 2; ch++) {
+          const data = impulse.getChannelData(ch);
+          for (let i = 0; i < length; i++) {
+            const env = Math.pow(1 - i / length, decay);
+            data[i] = (Math.random() * 2 - 1) * env;
+          }
+        }
+        return impulse;
+      },
+
+      /**
+       * Synthesizes a plucked string at normalized position p in [0, 1]
+       * and normalized velocity v in [0.1, 1.0].
+       * - Plucking near ends (|p - 0.5| large) boosts brightness/overtones.
+       * - Plucking near center (p ~ 0.5) yields warmer, rounder low-end.
+       * - Horizontal center X maps gently to stereo pan [-0.65, +0.65].
+       */
+      pluck({ freq, p = 0.5, velocity = 0.6, pan = 0, stringLengthPx = 200 }) {
+        this.ensureContext();
+        if (!this.ctx || !this.masterGain) return;
+
+        const now = this.ctx.currentTime;
+        const clampedP = Math.max(0.02, Math.min(0.98, p));
+        const vel = Math.max(0.12, Math.min(1.0, velocity));
+
+        // Off-center factor: 0 at dead center (p = 0.5), 1 at ends (p = 0 or 1)
+        const offCenter = Math.min(1, Math.abs(clampedP - 0.5) * 2);
+        // Brightness in [0, 1] driven by off-center pluck + pluck velocity
+        const brightness = Math.min(1, offCenter * 0.78 + vel * 0.32);
+
+        // Longer strings sustain slightly longer
+        const lenFactor = Math.max(0.75, Math.min(1.45, stringLengthPx / 320));
+        const decayTime = (1.35 + lenFactor * 0.85) * (0.75 + vel * 0.35);
+
+        // Stereo panner
+        const panner = this.ctx.createStereoPanner ? this.ctx.createStereoPanner() : null;
+        if (panner) {
+          panner.pan.setValueAtTime(Math.max(-0.7, Math.min(0.7, pan)), now);
+        }
+
+        // Master voice envelope
+        const voiceGain = this.ctx.createGain();
+        const peakGain = (0.18 + vel * 0.32) * (1 - offCenter * 0.12);
+        voiceGain.gain.setValueAtTime(0.0001, now);
+        voiceGain.gain.linearRampToValueAtTime(peakGain, now + 0.004);
+        voiceGain.gain.exponentialRampToValueAtTime(0.0008, now + decayTime);
+
+        // Dynamic Low-Pass Filter for warm vs. bright pluck tone
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        const baseCutoff = freq * (2.2 + brightness * 11.5);
+        const peakCutoff = Math.min(14500, baseCutoff * (1 + vel * 0.65));
+        const settleCutoff = Math.max(freq * 1.4, freq * (1.5 + brightness * 3.2));
+        filter.Q.setValueAtTime(1.1 + offCenter * 3.2, now);
+
+        filter.frequency.setValueAtTime(peakCutoff, now);
+        filter.frequency.exponentialRampToValueAtTime(settleCutoff, now + Math.min(0.9, decayTime * 0.65));
+
+        // 1. Warm Triangle Body Oscillator
+        const oscBody = this.ctx.createOscillator();
+        oscBody.type = 'triangle';
+        oscBody.frequency.setValueAtTime(freq, now);
+
+        // 2. Harmonic Sawtooth/Overtone Oscillator (stronger when plucked near ends)
+        const oscHarmonic = this.ctx.createOscillator();
+        oscHarmonic.type = 'sawtooth';
+        oscHarmonic.frequency.setValueAtTime(freq, now);
+
+        const harmGain = this.ctx.createGain();
+        harmGain.gain.setValueAtTime(0.14 + brightness * 0.55, now);
+        harmGain.gain.exponentialRampToValueAtTime(0.01, now + decayTime * 0.7);
+
+        // 3. Karplus-Strong style short noise burst transient ("pick/finger snap")
+        const burstLen = Math.max(16, Math.floor(this.ctx.sampleRate * (0.006 + (1 - offCenter) * 0.004)));
+        const noiseBuffer = this.ctx.createBuffer(1, burstLen, this.ctx.sampleRate);
+        const noiseData = noiseBuffer.getChannelData(0);
+        for (let i = 0; i < burstLen; i++) {
+          // Karplus-Strong excitation burst with subtle comb-like pluck-point notch
+          const notch = Math.sin((i / burstLen) * Math.PI * (1 + offCenter * 2));
+          noiseData[i] = (Math.random() * 2 - 1) * notch * (1 - i / burstLen);
+        }
+
+        const noiseSource = this.ctx.createBufferSource();
+        noiseSource.buffer = noiseBuffer;
+
+        const pluckTransientGain = this.ctx.createGain();
+        pluckTransientGain.gain.setValueAtTime(0.35 + vel * 0.65 + offCenter * 0.25, now);
+        pluckTransientGain.gain.exponentialRampToValueAtTime(0.001, now + 0.025);
+
+        // Connect graph
+        oscBody.connect(voiceGain);
+        oscHarmonic.connect(harmGain);
+        harmGain.connect(voiceGain);
+        noiseSource.connect(pluckTransientGain);
+        pluckTransientGain.connect(voiceGain);
+
+        voiceGain.connect(filter);
+        if (panner) {
+          filter.connect(panner);
+          panner.connect(this.masterGain);
+        } else {
+          filter.connect(this.masterGain);
+        }
+
+        // Start & stop nodes cleanly
+        const stopAt = now + decayTime + 0.08;
+        oscBody.start(now);
+        oscHarmonic.start(now);
+        noiseSource.start(now);
+
+        oscBody.stop(stopAt);
+        oscHarmonic.stop(stopAt);
+        noiseSource.stop(now + 0.04);
+
+        // Update HUD brightness & active note
+        updatePluckHud(midiToNoteName(Math.round(freqToMidiApprox(freq))), clampedP, brightness);
+      }
+    };
+
+    function freqToMidiApprox(freq) {
+      return 69 + 12 * Math.log2(Math.max(20, freq) / 440);
+    }
+
+    function updatePluckHud(noteLabel, p, brightness) {
+      state.lastPluckHudTime = performance.now();
+      activeNoteEl.textContent = noteLabel;
+      activePosEl.textContent = `p:${p.toFixed(2)}`;
+      const pct = Math.round(Math.max(0, Math.min(1, brightness)) * 100);
+      brightnessValEl.textContent = `${pct}%`;
+      brightnessBarEl.style.width = `${pct}%`;
+    }
+
+    // --- String Creation, Plucking & Physics ---
+    function createString(ax, ay, bx, by) {
+      const len = Math.hypot(bx - ax, by - ay);
+      if (len < MIN_STRING_LEN_PX) return null;
+
+      const mapped = lengthToMidi(len);
+      const hue = 185 + ((mapped.midi - MIN_MIDI) / (MAX_MIDI - MIN_MIDI)) * 155; // cyan -> violet/rose
+
+      const str = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        a: { x: ax, y: ay },
+        b: { x: bx, y: by },
+        midi: mapped.midi,
+        freq: midiToFreq(mapped.midi),
+        noteName: midiToNoteName(mapped.midi),
+        hue,
+        // Standing wave state
+        vibrating: false,
+        pluckTime: 0,
+        pluckP: 0.5,        // normalized pluck position along string in [0, 1]
+        amp: 0,           // visual oscillation amplitude in pixels
+        gamma: 2.2,       // visual damping rate
+        omega: 145,       // readable visual angular frequency (rad/s)
+        phase: 0,
+        bendAmount: 0,    // brief pre-release / pluck bow toward pluck point
+        anchorPulseA: 0,
+        anchorPulseB: 0,
+        lastPluckMs: 0
+      };
+
+      state.strings.push(str);
+      stringCountEl.textContent = String(state.strings.length);
+      return str;
+    }
+
+    function triggerPluck(str, p, speedPxPerSec, nowMs) {
+      // Debounce rapid micro-crossings on the same string
+      if (nowMs - str.lastPluckMs < 65) return;
+      str.lastPluckMs = nowMs;
+
+      const clampedP = Math.max(0.04, Math.min(0.96, p));
+      // Normalize finger/cursor speed into [0.15, 1.0]
+      const normVel = Math.max(0.15, Math.min(1.0, speedPxPerSec / 1400));
+      const offCenter = Math.min(1, Math.abs(clampedP - 0.5) * 2);
+      const brightness = Math.min(1, offCenter * 0.78 + normVel * 0.32);
+
+      const midX = (str.a.x + str.b.x) * 0.5;
+      const pan = ((midX / Math.max(1, state.width)) - 0.5) * 1.3;
+      const stringLen = Math.hypot(str.b.x - str.a.x, str.b.y - str.a.y);
+
+      audioEngine.pluck({
+        freq: str.freq,
+        p: clampedP,
+        velocity: normVel,
+        pan,
+        stringLengthPx: stringLen
+      });
+
+      // Configure visual standing-wave oscillation
+      str.vibrating = true;
+      str.pluckTime = nowMs / 1000;
+      str.pluckP = clampedP;
+      str.amp = 10 + normVel * 24;
+      str.gamma = 1.9 + (1 - normVel) * 0.8;
+      // Readable visual shimmer scaled gently by pitch
+      const pitchRatio = Math.max(0.7, Math.min(1.6, str.freq / 261.63));
+      str.omega = 125 * pitchRatio;
+      str.phase = (Math.random() - 0.5) * Math.PI * 0.5;
+      str.bendAmount = 6 + normVel * 10;
+      str.anchorPulseA = 1;
+      str.anchorPulseB = 1;
+
+      // Spawn overtone shimmer particles at pluck point
+      const pluckX = str.a.x + (str.b.x - str.a.x) * clampedP;
+      const pluckY = str.a.y + (str.b.y - str.a.y) * clampedP;
+      spawnPluckParticles(pluckX, pluckY, str.hue, brightness, normVel);
+    }
+
+    function spawnPluckParticles(x, y, hue, brightness, vel) {
+      const count = Math.floor(6 + brightness * 14 + vel * 6);
+      for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 25 + Math.random() * (85 + brightness * 110);
+        state.particles.push({
+          x,
+          y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed - 18,
+          life: 1,
+          decay: 1.4 + Math.random() * 1.4,
+          size: 1.5 + Math.random() * (2 + brightness * 2),
+          hue: brightness > 0.55 ? 42 + Math.random() * 24 : hue
+        });
+      }
+    }
+
+    /**
+     * Checks if segment (x0, y0) -> (x1, y1) crosses string (a -> b).
+     * Returns { p: normalized position along string [0,1] } or null.
+     */
+    function segmentIntersection(x0, y0, x1, y1, ax, ay, bx, by) {
+      const rX = x1 - x0;
+      const rY = y1 - y0;
+      const sX = bx - ax;
+      const sY = by - ay;
+
+      const denom = rX * sY - rY * sX;
+      if (Math.abs(denom) < 1e-6) return null;
+
+      const qpx = ax - x0;
+      const qpy = ay - y0;
+
+      const t = (qpx * sY - qpy * sX) / denom;
+      const u = (qpx * rY - qpy * rX) / denom;
+
+      if (t >= 0 && t <= 1 && u >= 0 && u <= 1) {
+        return { p: u };
+      }
+      return null;
+    }
+
+    /**
+     * Evaluates displacement along a vibrating string at normalized coordinate s in [0, 1]
+     * at current time `nowSec`.
+     * Formula: y(s, t) = A * exp(-gamma * t) * sin(pi * p) * sin(pi * s) * cos(omega * t + phi)
+     */
+    function evalStandingWaveDisplacement(str, s, nowSec) {
+      if (!str.vibrating) return 0;
+      const dt = Math.max(0, nowSec - str.pluckTime);
+      const envelope = Math.exp(-str.gamma * dt);
+      if (envelope < 0.015) {
+        str.vibrating = false;
+        return 0;
+      }
+      const pFactor = Math.sin(Math.PI * str.pluckP);
+      const sFactor = Math.sin(Math.PI * s);
+      const osc = Math.cos(str.omega * dt + str.phase);
+      const y = str.amp * envelope * pFactor * sFactor * osc;
+
+      // Also include brief initial bow decaying over first 90ms
+      const bowDecay = Math.exp(-dt * 28);
+      const tent = s < str.pluckP ? s / Math.max(0.05, str.pluckP) : (1 - s) / Math.max(0.05, 1 - str.pluckP);
+      const bow = str.bendAmount * bowDecay * Math.max(0, tent);
+
+      return y + bow * 0.35;
+    }
+
+    // --- Draft String Helpers (while stretching) ---
+    function updateDraft(ax, ay, bx, by) {
+      const len = Math.hypot(bx - ax, by - ay);
+      const mapped = lengthToMidi(len);
+      const roundedMidi = Math.round(mapped.midi);
+
+      let detentFlash = state.draft ? Math.max(0, state.draft.detentFlash - 0.08) : 0;
+      let lastDetentMidi = state.draft ? state.draft.lastDetentMidi : roundedMidi;
+
+      if (mapped.snapped && roundedMidi !== lastDetentMidi && len >= MIN_STRING_LEN_PX) {
+        lastDetentMidi = roundedMidi;
+        detentFlash = 1.0;
+      }
+
+      state.draft = {
+        a: { x: ax, y: ay },
+        b: { x: bx, y: by },
+        length: len,
+        midi: mapped.midi,
+        noteName: midiToNoteName(mapped.midi),
+        snapped: mapped.snapped,
+        lastDetentMidi,
+        detentFlash
+      };
+    }
+
+    // --- Sample Strings Preset ---
+    function spawnSampleStrings() {
+      const w = state.width;
+      const h = state.height;
+      const topPad = Math.max(110, h * 0.22);
+      const bottomPad = Math.max(110, h * 0.2);
+      const usableH = Math.max(180, h - topPad - bottomPad);
+
+      // Create 5 strings of varying lengths (short = higher pitch, long = lower pitch)
+      const configs = [
+        { cx: w * 0.5, y: topPad + usableH * 0.14, span: Math.min(w * 0.22, 190) },
+        { cx: w * 0.5, y: topPad + usableH * 0.32, span: Math.min(w * 0.34, 295) },
+        { cx: w * 0.5, y: topPad + usableH * 0.50, span: Math.min(w * 0.46, 405) },
+        { cx: w * 0.5, y: topPad + usableH * 0.68, span: Math.min(w * 0.58, 520) },
+        { cx: w * 0.5, y: topPad + usableH * 0.86, span: Math.min(w * 0.70, 640) }
+      ];
+
+      for (const cfg of configs) {
+        createString(cfg.cx - cfg.span * 0.5, cfg.y, cfg.cx + cfg.span * 0.5, cfg.y);
+      }
+
+      // Gently pluck the middle sample string so user hears immediate feedback
+      const midStr = state.strings[Math.floor(state.strings.length / 2)];
+      if (midStr) {
+        triggerPluck(midStr, 0.5, 650, performance.now());
+      }
+      showStatus('Spawned 5 sample strings — cross any string to pluck!', 'ok', 2800);
+    }
+
+    // --- Pointer (Mouse & Touch) Event Listeners ---
+    function getPointerPos(e) {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top
+      };
+    }
+
+    canvas.addEventListener('pointerdown', (e) => {
+      audioEngine.ensureContext();
+      const pos = getPointerPos(e);
+      const nowMs = performance.now();
+
+      state.pointer.isDown = true;
+      state.pointer.active = true;
+      state.pointer.prevX = pos.x;
+      state.pointer.prevY = pos.y;
+      state.pointer.x = pos.x;
+      state.pointer.y = pos.y;
+      state.pointer.vx = 0;
+      state.pointer.vy = 0;
+
+      // Start stretching a new string from pointer-down anchor
+      updateDraft(pos.x, pos.y, pos.x, pos.y);
+      setPinchHud('STRETCHING', true);
+    });
+
+    window.addEventListener('pointermove', (e) => {
+      if (!state.pointer.active && e.target !== canvas) return;
+      const pos = getPointerPos(e);
+      const nowMs = performance.now();
+
+      const prevX = state.pointer.x ?? pos.x;
+      const prevY = state.pointer.y ?? pos.y;
+      const dx = pos.x - prevX;
+      const dy = pos.y - prevY;
+
+      state.pointer.prevX = prevX;
+      state.pointer.prevY = prevY;
+      state.pointer.x = pos.x;
+      state.pointer.y = pos.y;
+      state.pointer.vx = dx * 60;
+      state.pointer.vy = dy * 60;
+      state.pointer.active = true;
+
+      if (state.pointer.isDown && state.draft) {
+        // Stretching a new string
+        updateDraft(state.draft.a.x, state.draft.a.y, pos.x, pos.y);
+      } else {
+        // Not creating a string: check index/cursor crossing across existing strings to pluck!
+        const speed = Math.hypot(dx, dy) * 60;
+        checkPluckAlongSegment(prevX, prevY, pos.x, pos.y, speed, nowMs);
+      }
+    });
+
+    window.addEventListener('pointerup', (e) => {
+      if (!state.pointer.isDown) return;
+      const pos = getPointerPos(e);
+      state.pointer.isDown = false;
+      state.pointer.x = pos.x;
+      state.pointer.y = pos.y;
+
+      if (state.draft) {
+        const created = createString(state.draft.a.x, state.draft.a.y, pos.x, pos.y);
+        if (created) {
+          created.anchorPulseA = 1;
+          created.anchorPulseB = 1;
+          // Play a soft confirmation pluck when string locks in
+          triggerPluck(created, 0.5, 420, performance.now());
+        } else if (state.draft.length > 4) {
+          showStatus('Pull slightly further to create a string.', 'amber', 1800);
+        }
+        state.draft = null;
+      }
+
+      if (!state.camera.enabled) {
+        setPinchHud('IDLE', false);
+      }
+    });
+
+    function checkPluckAlongSegment(x0, y0, x1, y1, speedPxPerSec, nowMs) {
+      if (Math.hypot(x1 - x0, y1 - y0) < 1.5) return;
+      for (const str of state.strings) {
+        const hit = segmentIntersection(x0, y0, x1, y1, str.a.x, str.a.y, str.b.x, str.b.y);
+        if (hit) {
+          triggerPluck(str, hit.p, Math.max(speedPxPerSec, 320), nowMs);
+        }
+      }
+    }
+
+    function setPinchHud(label, active) {
+      if (state.uiHidden) return;
+      pinchText.textContent = label;
+      if (active) {
+        pinchBadge.className =
+          'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-200 border border-cyan-400/50 font-mono-tech text-[11px]';
+        pinchDot.className = 'w-1.5 h-1.5 rounded-full bg-cyan-300 animate-pulse';
+      } else {
+        pinchBadge.className =
+          'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-mono-tech text-[11px]';
+        pinchDot.className = 'w-1.5 h-1.5 rounded-full bg-slate-500';
+      }
+    }
+
+    // --- Optional Webcam Hand Tracking (MediaPipe Hands) ---
+    async function toggleCameraTracking() {
+      if (state.camera.enabled) {
+        stopCameraTracking();
+        return;
+      }
+      if (state.camera.starting) return;
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        showStatus('Camera API unavailable in this browser. Use mouse/touch to create & pluck strings.', 'error');
+        return;
+      }
+
+      if (typeof window.Hands === 'undefined') {
+        showStatus('MediaPipe Hands library failed to load. Using mouse/touch mode.', 'error');
+        return;
+      }
+
+      state.camera.starting = true;
+      camLabel.textContent = 'Starting...';
+      camDot.className = 'w-2 h-2 rounded-full bg-amber-400 animate-ping';
+
+      try {
+        audioEngine.ensureContext();
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+          audio: false
+        });
+        state.camera.stream = stream;
+        videoEl.srcObject = stream;
+        await videoEl.play();
+
+        const hands = new window.Hands({
+          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+        hands.setOptions({
+          maxNumHands: 2,
+          modelComplexity: 1,
+          minDetectionConfidence: 0.65,
+          minTrackingConfidence: 0.6
+        });
+        hands.onResults(onHandResults);
+        state.camera.mpHands = hands;
+
+        state.camera.enabled = true;
+        state.camera.starting = false;
+        camLabel.textContent = 'Camera: On';
+        camDot.className = 'w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]';
+        trackSourceEl.textContent = 'Input: Hands + Pointer';
+        showStatus('Pinch thumb & index on BOTH hands and pull apart to create strings!', 'ok', 4200);
+
+        // Pump frames smoothly into MediaPipe Hands
+        const processFrame = async () => {
+          if (!state.camera.enabled) return;
+          try {
+            if (videoEl.readyState >= 2 && state.camera.mpHands) {
+              await state.camera.mpHands.send({ image: videoEl });
+            }
+          } catch (err) {
+            console.warn('Hand frame error:', err);
+          }
+          if (state.camera.enabled) {
+            requestAnimationFrame(processFrame);
+          }
+        };
+        requestAnimationFrame(processFrame);
+      } catch (err) {
+        console.warn('Camera permission/init error:', err);
+        stopCameraTracking();
+        showStatus('Camera unavailable or permission denied. Pointer mode stays active!', 'amber', 4500);
+      }
+    }
+
+    function stopCameraTracking() {
+      state.camera.enabled = false;
+      state.camera.starting = false;
+      state.camera.hands = [];
+      state.camera.twoHandPinching = false;
+      state.camera.indexTip = null;
+      state.camera.pinchA = null;
+      state.camera.pinchB = null;
+
+      if (state.camera.stream) {
+        for (const track of state.camera.stream.getTracks()) {
+          track.stop();
+        }
+        state.camera.stream = null;
+      }
+      if (state.camera.mpHands) {
+        try {
+          state.camera.mpHands.close();
+        } catch (_) {}
+        state.camera.mpHands = null;
+      }
+
+      camLabel.textContent = 'Camera: Off';
+      camDot.className = 'w-2 h-2 rounded-full bg-slate-400';
+      trackSourceEl.textContent = 'Input: Pointer';
+      if (!state.pointer.isDown) {
+        setPinchHud('IDLE', false);
+      }
+    }
+
+    function onHandResults(results) {
+      if (!state.camera.enabled) return;
+      const nowMs = performance.now();
+      const multi = results.multiHandLandmarks || [];
+
+      const parsedHands = multi.map((lm) => {
+        // Mirror X so moving hand right moves cursor/anchors right naturally
+        const thumb = lm[4];
+        const indexTip = lm[8];
+        const wrist = lm[0];
+        const middleMcp = lm[9];
+
+        const tx = (1 - thumb.x) * state.width;
+        const ty = thumb.y * state.height;
+        const ix = (1 - indexTip.x) * state.width;
+        const iy = indexTip.y * state.height;
+
+        // Normalize pinch distance by hand scale (wrist to middle MCP)
+        const handScale = Math.max(40, Math.hypot((1 - middleMcp.x) * state.width - (1 - wrist.x) * state.width, middleMcp.y * state.height - wrist.y * state.height));
+        const pinchDist = Math.hypot(ix - tx, iy - ty);
+        const pinchRatio = pinchDist / handScale;
+        const isPinching = pinchRatio < 0.34;
+
+        return {
+          pinchX: (tx + ix) * 0.5,
+          pinchY: (ty + iy) * 0.5,
+          indexX: ix,
+          indexY: iy,
+          isPinching,
+          landmarks: lm.map((pt) => ({ x: (1 - pt.x) * state.width, y: pt.y * state.height }))
+        };
+      });
+
+      state.camera.hands = parsedHands;
+
+      // Update primary index-finger tip for plucking when not stretching
+      if (parsedHands.length > 0) {
+        const primary = parsedHands[0];
+        const prevIdx = state.camera.indexTip;
+        const vx = prevIdx ? (primary.indexX - prevIdx.x) * 30 : 0;
+        const vy = prevIdx ? (primary.indexY - prevIdx.y) * 30 : 0;
+
+        state.camera.indexTip = {
+          x: primary.indexX,
+          y: primary.indexY,
+          prevX: prevIdx ? prevIdx.x : primary.indexX,
+          prevY: prevIdx ? prevIdx.y : primary.indexY,
+          vx,
+          vy
+        };
+
+        // Check plucking if not actively stretching a string
+        if (!state.camera.twoHandPinching && !state.pointer.isDown && prevIdx) {
+          const speed = Math.hypot(primary.indexX - prevIdx.x, primary.indexY - prevIdx.y) * 30;
+          checkPluckAlongSegment(prevIdx.x, prevIdx.y, primary.indexX, primary.indexY, speed, nowMs);
+        }
+      } else {
+        state.camera.indexTip = null;
+      }
+
+      // Two-hand pinch-to-create & pull-to-stretch
+      const pinchingHands = parsedHands.filter((h) => h.isPinching);
+      if (pinchingHands.length >= 2) {
+        const h1 = pinchingHands[0];
+        const h2 = pinchingHands[1];
+        state.camera.pinchA = { x: h1.pinchX, y: h1.pinchY };
+        state.camera.pinchB = { x: h2.pinchX, y: h2.pinchY };
+        state.camera.twoHandPinching = true;
+
+        updateDraft(h1.pinchX, h1.pinchY, h2.pinchX, h2.pinchY);
+        setPinchHud('2-HAND PINCH', true);
+      } else if (state.camera.twoHandPinching) {
+        // Released pinch -> lock string in place!
+        if (state.draft && state.camera.pinchA && state.camera.pinchB) {
+          const created = createString(
+            state.camera.pinchA.x,
+            state.camera.pinchA.y,
+            state.camera.pinchB.x,
+            state.camera.pinchB.y
+          );
+          if (created) {
+            created.anchorPulseA = 1;
+            created.anchorPulseB = 1;
+            triggerPluck(created, 0.5, 450, nowMs);
+          }
+        }
+        state.draft = null;
+        state.camera.twoHandPinching = false;
+        state.camera.pinchA = null;
+        state.camera.pinchB = null;
+        setPinchHud('IDLE', false);
+      } else {
+        if (!state.pointer.isDown) {
+          setPinchHud(parsedHands.length > 0 ? 'HAND TRACKED' : 'IDLE', parsedHands.length > 0);
+        }
+      }
+    }
+
+    // --- UI Control Bindings ---
+    btnCamera.addEventListener('click', toggleCameraTracking);
+
+    selectRoot.addEventListener('change', (e) => {
+      state.rootPitchClass = Number(e.target.value);
+      refreshAllStringPitches();
+    });
+
+    selectScale.addEventListener('change', (e) => {
+      state.scaleKey = e.target.value;
+      refreshAllStringPitches();
+    });
+
+    btnSamples.addEventListener('click', () => {
+      audioEngine.ensureContext();
+      spawnSampleStrings();
+    });
+
+    btnClear.addEventListener('click', () => {
+      state.strings = [];
+      state.particles = [];
+      state.draft = null;
+      stringCountEl.textContent = '0';
+      showStatus('All strings cleared.', 'amber', 1800);
+    });
+
+    function isFullscreenActive() {
+      return Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+    }
+
+    function syncFullscreenButton() {
+      if (!btnFullscreen) return;
+      btnFullscreen.textContent = isFullscreenActive() ? 'Exit Fullscreen' : 'Fullscreen';
+    }
+
+    async function toggleFullscreen() {
+      try {
+        if (!isFullscreenActive()) {
+          const target = document.documentElement;
+          if (target.requestFullscreen) {
+            await target.requestFullscreen();
+          } else if (target.webkitRequestFullscreen) {
+            target.webkitRequestFullscreen();
+          } else {
+            showStatus('Fullscreen is not supported in this browser.', 'amber', 2400);
+          }
+        } else if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        } else if (document.webkitExitFullscreen) {
+          document.webkitExitFullscreen();
+        }
+      } catch (err) {
+        console.warn('Fullscreen toggle issue:', err);
+        showStatus('Unable to change fullscreen mode here.', 'amber', 2400);
+      } finally {
+        syncFullscreenButton();
+      }
+    }
+
+    btnFullscreen.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleFullscreen();
+    });
+
+    document.addEventListener('fullscreenchange', syncFullscreenButton);
+    document.addEventListener('webkitfullscreenchange', syncFullscreenButton);
+
+    function setUiHidden(hidden) {
+      state.uiHidden = Boolean(hidden);
+      if (studioHeader) studioHeader.classList.toggle('hidden', state.uiHidden);
+      if (studioFooter) studioFooter.classList.toggle('hidden', state.uiHidden);
+      if (state.uiHidden && statusBanner) {
+        statusBanner.classList.add('hidden');
+      }
+    }
+
+    btnHideUi.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setUiHidden(!state.uiHidden);
+    });
+
+    // Restore interface elements when physically touching the screen
+    window.addEventListener('touchstart', () => {
+      if (state.uiHidden) {
+        setUiHidden(false);
+      }
+    }, { passive: true });
+
+    // --- Rendering Loop ---
+    function render(nowMs) {
+      const nowSec = nowMs / 1000;
+      ctx.clearRect(0, 0, state.width, state.height);
+
+      // 1. Subtle studio grid / spatial depth backdrop
+      drawStudioBackdrop();
+
+      // 2. Optional camera hand skeleton overlay (subtle & unobtrusive)
+      if (state.camera.enabled && state.camera.hands.length > 0) {
+        drawHandLandmarks(state.camera.hands);
+      }
+
+      // 3. Empty state hint if no strings exist yet and not drafting
+      if (state.strings.length === 0 && !state.draft) {
+        drawEmptyHint(nowSec);
+      }
+
+      // 4. Render anchored strings & standing-wave vibrations
+      for (const str of state.strings) {
+        drawAnchoredString(str, nowSec);
+      }
+
+      // 5. Render active string draft while stretching
+      if (state.draft) {
+        drawDraftString(state.draft, nowSec);
+      }
+
+      // 6. Render & update overtone shimmer particles
+      updateAndDrawParticles(nowSec);
+
+      // 7. Render subtle index-finger / cursor pluck indicator when not dragging
+      if (!state.pointer.isDown && state.pointer.x !== null && state.pointer.y !== null) {
+        drawPointerPluckCursor(state.pointer.x, state.pointer.y, nowSec);
+      }
+      if (state.camera.enabled && state.camera.indexTip) {
+        drawPointerPluckCursor(state.camera.indexTip.x, state.camera.indexTip.y, nowSec, true);
+      }
+
+      // Decay active pluck HUD after 1.6s of quiet
+      if (state.lastPluckHudTime > 0 && nowMs - state.lastPluckHudTime > 1600) {
+        activeNoteEl.textContent = '—';
+        activePosEl.textContent = 'p:--';
+        brightnessValEl.textContent = '0%';
+        brightnessBarEl.style.width = '0%';
+        state.lastPluckHudTime = 0;
+      }
+
+      requestAnimationFrame(render);
+    }
+
+    function drawStudioBackdrop() {
+      const grad = ctx.createRadialGradient(
+        state.width * 0.5,
+        state.height * 0.45,
+        40,
+        state.width * 0.5,
+        state.height * 0.5,
+        Math.max(state.width, state.height) * 0.75
+      );
+      grad.addColorStop(0, '#0e1526');
+      grad.addColorStop(1, '#06080e');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, state.width, state.height);
+
+      // Subtle reference lines
+      ctx.save();
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.045)';
+      ctx.lineWidth = 1;
+      const step = 64;
+      for (let x = (state.width % step) * 0.5; x < state.width; x += step) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, state.height);
+        ctx.stroke();
+      }
+      for (let y = (state.height % step) * 0.5; y < state.height; y += step) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(state.width, y);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    function drawEmptyHint(nowSec) {
+      const pulse = 0.65 + 0.35 * Math.sin(nowSec * 2.2);
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.fillStyle = `rgba(203, 213, 225, ${0.42 * pulse})`;
+      ctx.font = '500 15px Inter, sans-serif';
+      ctx.fillText(
+        'Click & Drag (or Pinch Both Hands & Pull) to Create a String',
+        state.width * 0.5,
+        state.height * 0.5 - 12
+      );
+      ctx.fillStyle = 'rgba(148, 163, 184, 0.55)';
+      ctx.font = '12px Inter, sans-serif';
+      ctx.fillText(
+        'Shorter strings = higher pitch · Longer strings = lower pitch · Click "Spawn Sample Strings" to start right away',
+        state.width * 0.5,
+        state.height * 0.5 + 14
+      );
+      ctx.restore();
+    }
+
+    function drawAnchoredString(str, nowSec) {
+      const dx = str.b.x - str.a.x;
+      const dy = str.b.y - str.a.y;
+      const len = Math.max(1, Math.hypot(dx, dy));
+      // Unit normal perpendicular to string
+      const nx = -dy / len;
+      const ny = dx / len;
+
+      const segments = Math.max(24, Math.min(72, Math.floor(len / 8)));
+      const points = [];
+      for (let i = 0; i <= segments; i++) {
+        const s = i / segments;
+        const disp = evalStandingWaveDisplacement(str, s, nowSec);
+        points.push({
+          x: str.a.x + dx * s + nx * disp,
+          y: str.a.y + dy * s + ny * disp
+        });
+      }
+
+      ctx.save();
+      // Outer glow
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) {
+        ctx.lineTo(points[i].x, points[i].y);
+      }
+      ctx.strokeStyle = `hsla(${str.hue}, 90%, 62%, ${str.vibrating ? 0.35 : 0.16})`;
+      ctx.lineWidth = str.vibrating ? 8 : 5;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+
+      // Core string line
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) {
+        ctx.lineTo(points[i].x, points[i].y);
+      }
+      ctx.strokeStyle = `hsla(${str.hue}, 95%, ${str.vibrating ? 76 : 66}%, 0.95)`;
+      ctx.lineWidth = str.vibrating ? 2.6 : 2.0;
+      ctx.stroke();
+
+      // Subtle center & note tag
+      const midX = (str.a.x + str.b.x) * 0.5;
+      const midY = (str.a.y + str.b.y) * 0.5;
+      ctx.font = '500 11px "JetBrains Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(226, 232, 240, 0.62)';
+      ctx.fillText(str.noteName, midX, midY - 10);
+
+      // Anchor nodes A & B with pulse on lock/pluck
+      str.anchorPulseA = Math.max(0, str.anchorPulseA - 0.035);
+      str.anchorPulseB = Math.max(0, str.anchorPulseB - 0.035);
+      drawAnchorNode(str.a.x, str.a.y, str.hue, str.anchorPulseA);
+      drawAnchorNode(str.b.x, str.b.y, str.hue, str.anchorPulseB);
+      ctx.restore();
+    }
+
+    function drawAnchorNode(x, y, hue, pulse) {
+      const r = 5 + pulse * 6;
+      if (pulse > 0.02) {
+        ctx.beginPath();
+        ctx.arc(x, y, r + 4, 0, Math.PI * 2);
+        ctx.fillStyle = `hsla(${hue}, 95%, 65%, ${pulse * 0.35})`;
+        ctx.fill();
+      }
+      ctx.beginPath();
+      ctx.arc(x, y, 5, 0, Math.PI * 2);
+      ctx.fillStyle = '#0b1020';
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = `hsla(${hue}, 95%, 70%, 0.95)`;
+      ctx.stroke();
+    }
+
+    function drawDraftString(draft, nowSec) {
+      const isValid = draft.length >= MIN_STRING_LEN_PX;
+      const accent = isValid ? '#22d3ee' : '#f59e0b';
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(draft.a.x, draft.a.y);
+      ctx.lineTo(draft.b.x, draft.b.y);
+      ctx.setLineDash([7, 6]);
+      ctx.lineDashOffset = -nowSec * 28;
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 2.2;
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Endpoints
+      for (const pt of [draft.a, draft.b]) {
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 6.5, 0, Math.PI * 2);
+        ctx.fillStyle = accent;
+        ctx.fill();
+      }
+
+      // Live pitch & detent snap indicator
+      const midX = (draft.a.x + draft.b.x) * 0.5;
+      const midY = (draft.a.y + draft.b.y) * 0.5;
+      const pillW = draft.snapped ? 116 : 96;
+      const pillH = 26;
+
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+      roundRect(ctx, midX - pillW * 0.5, midY - 34, pillW, pillH, 10);
+      ctx.fill();
+      ctx.lineWidth = 1 + draft.detentFlash * 1.5;
+      ctx.strokeStyle = draft.detentFlash > 0.1 ? '#34d399' : 'rgba(34, 211, 238, 0.55)';
+      ctx.stroke();
+
+      ctx.font = '600 12px "JetBrains Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = isValid ? '#e2f8ff' : '#fde68a';
+      const labelText = isValid
+        ? `${draft.noteName}${draft.snapped ? ' · SNAP' : ' · FREE'}`
+        : 'Pull wider...';
+      ctx.fillText(labelText, midX, midY - 21);
+
+      ctx.restore();
+    }
+
+    function drawPointerPluckCursor(x, y, nowSec, isHandIndex = false) {
+      ctx.save();
+      const ringR = isHandIndex ? 9 : 6;
+      ctx.beginPath();
+      ctx.arc(x, y, ringR, 0, Math.PI * 2);
+      ctx.strokeStyle = isHandIndex ? 'rgba(52, 211, 153, 0.8)' : 'rgba(251, 191, 36, 0.55)';
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+      ctx.fillStyle = isHandIndex ? '#6ee7b7' : '#fcd34d';
+      ctx.fill();
+      ctx.restore();
+    }
+
+    function drawHandLandmarks(hands) {
+      ctx.save();
+      for (const h of hands) {
+        // Draw subtle finger skeleton dots
+        for (let i = 0; i < h.landmarks.length; i++) {
+          const pt = h.landmarks[i];
+          const isKey = i === 4 || i === 8;
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, isKey ? 5 : 2.5, 0, Math.PI * 2);
+          ctx.fillStyle = isKey
+            ? h.isPinching
+              ? 'rgba(34, 211, 238, 0.95)'
+              : 'rgba(248, 250, 252, 0.7)'
+            : 'rgba(148, 163, 184, 0.35)';
+          ctx.fill();
+        }
+        // Pinch connector between thumb tip (4) and index tip (8)
+        const thumb = h.landmarks[4];
+        const idx = h.landmarks[8];
+        if (thumb && idx) {
+          ctx.beginPath();
+          ctx.moveTo(thumb.x, thumb.y);
+          ctx.lineTo(idx.x, idx.y);
+          ctx.strokeStyle = h.isPinching ? 'rgba(34, 211, 238, 0.9)' : 'rgba(148, 163, 184, 0.25)';
+          ctx.lineWidth = h.isPinching ? 2.5 : 1;
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+    }
+
+    let lastFrameTime = performance.now();
+    function updateAndDrawParticles(nowMs) {
+      const dt = Math.min(0.05, Math.max(0.001, (nowMs - lastFrameTime) / 1000));
+      lastFrameTime = nowMs;
+
+      ctx.save();
+      for (let i = state.particles.length - 1; i >= 0; i--) {
+        const pt = state.particles[i];
+        pt.x += pt.vx * dt;
+        pt.y += pt.vy * dt;
+        pt.vy += 90 * dt; // gentle gravity
+        pt.vx *= 0.97;
+        pt.life -= pt.decay * dt;
+
+        if (pt.life <= 0) {
+          state.particles.splice(i, 1);
+          continue;
+        }
+
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, pt.size * pt.life, 0, Math.PI * 2);
+        ctx.fillStyle = `hsla(${pt.hue}, 95%, 72%, ${pt.life * 0.85})`;
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    function roundRect(c, x, y, w, h, r) {
+      const radius = Math.min(r, w * 0.5, h * 0.5);
+      c.beginPath();
+      c.moveTo(x + radius, y);
+      c.arcTo(x + w, y, x + w, y + h, radius);
+      c.arcTo(x + w, y + h, x, y + h, radius);
+      c.arcTo(x, y + h, x, y, radius);
+      c.arcTo(x, y, x + w, y, radius);
+      c.closePath();
+    }
+
+    // --- Initialization ---
+    window.addEventListener('resize', resizeCanvas);
+    window.addEventListener('DOMContentLoaded', () => {
+      resizeCanvas();
+      requestAnimationFrame(render);
+    });
+  </script>
+</body>
+</html>
