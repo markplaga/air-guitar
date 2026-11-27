@@ -44,23 +44,31 @@ else:
     seq = 1
 release = "%s-%s-%d" % (display, datestr, seq)
 
-def replace_once(path, pattern, replacement):
-    with open(path, encoding="utf-8") as f:
-        text = f.read()
-    new, n = re.subn(pattern, replacement, text, count=1, flags=re.MULTILINE)
+# Stage every replacement in memory first, so a failed match leaves
+# no file half-updated. Leading indentation is allowed and preserved.
+staged = {}
+
+def replace_once(path, name, value):
+    if path not in staged:
+        with open(path, encoding="utf-8") as f:
+            staged[path] = f.read()
+    q = "'" if path == "index.html" else " "
+    pattern = (r"^([ \t]*)const %s='[^']*';" % name if q == "'"
+               else r"^([ \t]*)const %s = '[^']*';" % name)
+    fmt = "const %s='%s';" if q == "'" else "const %s = '%s';"
+    new, n = re.subn(pattern, lambda m: m.group(1) + fmt % (name, value),
+                     staged[path], flags=re.MULTILINE)
     if n != 1:
         fail("%s: expected exactly one match for %s, found %d" % (path, pattern, n))
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(new)
+    staged[path] = new
 
-replace_once("index.html", r"^const APP_RELEASE='[^']*';",
-             "const APP_RELEASE='%s';" % release)
-replace_once("index.html", r"^const APP_VERSION='[^']*';",
-             "const APP_VERSION='%s';" % display)
-replace_once("sw.js", r"^const RELEASE = '[^']*';",
-             "const RELEASE = '%s';" % release)
-replace_once("sw.js", r"^const DISPLAY_VERSION = '[^']*';",
-             "const DISPLAY_VERSION = '%s';" % display)
+replace_once("index.html", "APP_RELEASE", release)
+replace_once("index.html", "APP_VERSION", display)
+replace_once("sw.js", "RELEASE", release)
+replace_once("sw.js", "DISPLAY_VERSION", display)
+for path, text in staged.items():
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
 with open("version.json", "w", encoding="utf-8") as f:
     json.dump({"release": release, "version": display,
                "date": isodate, "notes": notes}, f)
