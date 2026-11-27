@@ -1,11 +1,15 @@
-// Air Strings service worker v1 — same-origin app shell only.
+// Air Strings service worker v2 — same-origin app shell only.
 // CDN libraries (Tailwind, MediaPipe, Google Fonts) are never cached.
-const CACHE_NAME = 'air-strings-v1';
+const CACHE_NAME = 'air-strings-v2';
 const CORE_FILES = [
   './',
   'index.html',
   'manifest.webmanifest',
   'icons/icon.svg',
+  'icons/icon-192.png',
+  'icons/icon-512.png',
+  'icons/icon-maskable-512.png',
+  'icons/apple-touch-icon.png',
 ];
 
 self.addEventListener('install', (event) => {
