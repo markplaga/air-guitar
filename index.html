@@ -86,7 +86,7 @@
       <p class="text-xs text-slate-300 leading-snug">
         <span class="text-cyan-300 font-medium">Pinch &amp; Pull</span> (or Drag) to Create
         <span class="mx-1 text-slate-500">·</span>
-        <span class="text-amber-300 font-medium">Index / Cursor Cross</span> to Pluck
+        <span class="text-amber-300 font-medium">Either Index Finger / Cursor</span> to Strum
       </p>
     </div>
 
@@ -334,7 +334,7 @@
         stream: null,
         hands: [], // normalized/canvas hand landmarks info
         twoHandPinching: false,
-        indexTip: null, // { x, y, prevX, prevY, vx, vy }
+        indexTips: [], // one per tracked hand: { x, y, prevX, prevY, vx, vy }
         pinchA: null,   // { x, y, pinching, prevPinching }
         pinchB: null    // { x, y, pinching, prevPinching }
       },
@@ -976,7 +976,7 @@
         camLabel.textContent = 'Camera: On';
         camDot.className = 'w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]';
         trackSourceEl.textContent = 'Input: Hands + Pointer';
-        showStatus('Pinch thumb & index on BOTH hands and pull apart to create strings!', 'ok', 4200);
+        showStatus('Pinch BOTH hands & pull apart to create strings — strum with either index finger!', 'ok', 4200);
 
         // Pump frames smoothly into MediaPipe Hands
         const processFrame = async () => {
@@ -1005,7 +1005,7 @@
       state.camera.starting = false;
       state.camera.hands = [];
       state.camera.twoHandPinching = false;
-      state.camera.indexTip = null;
+      state.camera.indexTips = [];
       state.camera.pinchA = null;
       state.camera.pinchB = null;
 
@@ -1065,30 +1065,42 @@
 
       state.camera.hands = parsedHands;
 
-      // Update primary index-finger tip for plucking when not stretching
-      if (parsedHands.length > 0) {
-        const primary = parsedHands[0];
-        const prevIdx = state.camera.indexTip;
-        const vx = prevIdx ? (primary.indexX - prevIdx.x) * 30 : 0;
-        const vy = prevIdx ? (primary.indexY - prevIdx.y) * 30 : 0;
+      // Track every hand's index-finger tip so both index fingers can strum.
+      // MediaPipe's hand order (and handedness labels) can swap between
+      // frames, so match each hand to the nearest tip from the last frame.
+      const prevTips = state.camera.indexTips.slice();
+      const maxJump = Math.hypot(state.width, state.height) * 0.3;
+      const nextTips = [];
+      for (const hand of parsedHands) {
+        let bestI = -1;
+        let bestD = maxJump;
+        for (let i = 0; i < prevTips.length; i++) {
+          if (!prevTips[i]) continue;
+          const d = Math.hypot(hand.indexX - prevTips[i].x, hand.indexY - prevTips[i].y);
+          if (d < bestD) {
+            bestD = d;
+            bestI = i;
+          }
+        }
+        const prevIdx = bestI >= 0 ? prevTips[bestI] : null;
+        if (bestI >= 0) prevTips[bestI] = null;
 
-        state.camera.indexTip = {
-          x: primary.indexX,
-          y: primary.indexY,
-          prevX: prevIdx ? prevIdx.x : primary.indexX,
-          prevY: prevIdx ? prevIdx.y : primary.indexY,
-          vx,
-          vy
-        };
+        nextTips.push({
+          x: hand.indexX,
+          y: hand.indexY,
+          prevX: prevIdx ? prevIdx.x : hand.indexX,
+          prevY: prevIdx ? prevIdx.y : hand.indexY,
+          vx: prevIdx ? (hand.indexX - prevIdx.x) * 30 : 0,
+          vy: prevIdx ? (hand.indexY - prevIdx.y) * 30 : 0
+        });
 
         // Check plucking if not actively stretching a string
         if (!state.camera.twoHandPinching && !state.pointer.isDown && prevIdx) {
-          const speed = Math.hypot(primary.indexX - prevIdx.x, primary.indexY - prevIdx.y) * 30;
-          checkPluckAlongSegment(prevIdx.x, prevIdx.y, primary.indexX, primary.indexY, speed, nowMs);
+          const speed = Math.hypot(hand.indexX - prevIdx.x, hand.indexY - prevIdx.y) * 30;
+          checkPluckAlongSegment(prevIdx.x, prevIdx.y, hand.indexX, hand.indexY, speed, nowMs);
         }
-      } else {
-        state.camera.indexTip = null;
       }
+      state.camera.indexTips = nextTips;
 
       // Two-hand pinch-to-create & pull-to-stretch
       const pinchingHands = parsedHands.filter((h) => h.isPinching);
@@ -1251,8 +1263,10 @@
       if (!state.pointer.isDown && state.pointer.x !== null && state.pointer.y !== null) {
         drawPointerPluckCursor(state.pointer.x, state.pointer.y, nowSec);
       }
-      if (state.camera.enabled && state.camera.indexTip) {
-        drawPointerPluckCursor(state.camera.indexTip.x, state.camera.indexTip.y, nowSec, true);
+      if (state.camera.enabled) {
+        for (const tip of state.camera.indexTips) {
+          drawPointerPluckCursor(tip.x, tip.y, nowSec, true);
+        }
       }
 
       // Decay active pluck HUD after 1.6s of quiet
